@@ -56,7 +56,7 @@ pub const FunctionEntry = packed struct {
 
 pub const Program = struct {
     header: ProgramHeader,
-    functions: std.AutoHashMap(u32, u32),
+    functions: std.AutoArrayHashMap(u32, u32),
 
     pub fn deinit(self: *Program) void {
         self.functions.deinit();
@@ -83,7 +83,7 @@ pub const Parser = struct {
         const header = try self.readStruct(ProgramHeader);
         log.info("Parsing program \"{s}\"", .{header.name()});
 
-        var functions = std.AutoHashMap(u32, u32).init(self.allocator);
+        var functions = std.AutoArrayHashMap(u32, u32).init(self.allocator);
         errdefer functions.deinit();
 
         while (true) {
