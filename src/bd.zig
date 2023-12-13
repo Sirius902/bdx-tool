@@ -80,24 +80,36 @@ pub const Parser = struct {
     endian: ?Endian = null,
 
     pub fn parse(self: *Parser) (Allocator.Error || ReadError)!ParseResult {
-        const header = try self.readStruct(ProgramHeader);
-        log.info("Parsing program \"{s}\"", .{header.name()});
+        var program: Program = .{
+            .header = undefined,
+            .functions = std.AutoArrayHashMap(u32, u32).init(self.allocator),
+        };
+        errdefer program.deinit();
 
-        var functions = std.AutoArrayHashMap(u32, u32).init(self.allocator);
-        errdefer functions.deinit();
+        const err = try self.parseProgram(&program);
+        if (err) |e| {
+            program.deinit();
+            return .{ .Error = e };
+        }
+
+        return .{ .Program = program };
+    }
+
+    pub fn parseProgram(self: *Parser, program: *Program) (Allocator.Error || ReadError)!?ParseError {
+        program.header = try self.readStruct(ProgramHeader);
+        log.info("Parsing program \"{s}\"", .{program.header.name()});
 
         while (true) {
             const entry = try self.readStruct(FunctionEntry);
             if (entry.address == 0) break;
 
-            const duplicate = try functions.fetchPut(entry.id, entry.address);
+            const duplicate = try program.functions.fetchPut(entry.id, entry.address);
             if (duplicate) |kv| {
-                defer functions.deinit();
-                return .{ .Error = .{ .DuplicateFunctionId = .{ .id = kv.key } } };
+                return .{ .DuplicateFunctionId = .{ .id = kv.key } };
             }
         }
 
-        return .{ .Program = .{ .header = header, .functions = functions } };
+        return null;
     }
 
     fn readInt(self: *Parser, comptime T: type) ReadError!T {
