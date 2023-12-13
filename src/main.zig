@@ -1,5 +1,5 @@
 const std = @import("std");
-const bd = @import("bd.zig");
+const bd = @import("bd/bd.zig");
 
 comptime {
     std.testing.refAllDecls(@This());
@@ -50,6 +50,6 @@ fn output_disassembly(program: *const bd.Program) std.fs.File.WriteError!void {
     try stdout.writeAll("testing testing 123\n");
 }
 
-fn output_error(err: bd.ParseError) void {
+fn output_error(err: bd.Parser.Error) void {
     std.log.err("{}", .{err});
 }
