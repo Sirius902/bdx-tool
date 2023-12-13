@@ -43,7 +43,7 @@ pub const ProgramHeader = extern struct {
     frames_size: u32,
     stack_size: u32,
 
-    pub fn name(self: ProgramHeader) []const u8 {
+    pub fn name(self: *const ProgramHeader) []const u8 {
         const end = mem.indexOfScalarPos(u8, &self.name_bytes, 0, 0) orelse self.name_bytes.len;
         return self.name_bytes[0..end];
     }
