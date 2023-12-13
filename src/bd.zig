@@ -130,3 +130,7 @@ pub const Parser = struct {
         }
     }
 };
+
+test "ProgramHeader size" {
+    try std.testing.expectEqual(0x1C, @sizeOf(ProgramHeader));
+}
