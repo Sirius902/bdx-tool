@@ -3,7 +3,7 @@ const Endian = std.builtin.Endian;
 
 pub const native = @import("builtin").cpu.arch.endian();
 
-pub fn swapToEndian(comptime S: type, s: *S, endian: Endian) void {
+pub inline fn swapToEndian(comptime S: type, s: *S, endian: Endian) void {
     if (endian != native) byteSwap(S, s);
 }
 
