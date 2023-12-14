@@ -43,7 +43,7 @@ fn output_disassembly(program: *const bd.Program) std.fs.File.WriteError!void {
     try stdout.writeAll("functions");
     var iter = program.functions.iterator();
     while (iter.next()) |kv| {
-        try stdout.print("\n{X:0>8}: {X:0>8}", .{ kv.key_ptr.*, 2 * kv.value_ptr.* });
+        try stdout.print("\n{X:0>8}: {X:0>8}", .{ kv.key_ptr.*, bd.offsetToStreamPos(kv.value_ptr.*) });
     }
     try stdout.writeAll("\n\n");
 
