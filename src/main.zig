@@ -1,4 +1,5 @@
 const std = @import("std");
+const Endian = std.builtin.Endian;
 const bd = @import("bd/bd.zig");
 
 comptime {
@@ -10,6 +11,7 @@ pub fn main() !void {
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
+    // TODO: Deinit args as soon as it is no longer needed.
     var args = try std.process.argsWithAllocator(allocator);
     defer args.deinit();
 
@@ -17,10 +19,24 @@ pub fn main() !void {
     const bdx_path = try allocator.dupe(u8, args.next() orelse return error.InvalidArgument);
     defer allocator.free(bdx_path);
 
+    var endian: ?Endian = null;
+    if (args.next()) |endian_str| {
+        if (std.mem.eql(u8, endian_str, "b")) {
+            endian = .big;
+        } else if (std.mem.eql(u8, endian_str, "l")) {
+            endian = .little;
+        } else {
+            return error.InvalidArgument;
+        }
+    }
+
     var bdx_file = try std.fs.cwd().openFile(bdx_path, .{});
     defer bdx_file.close();
 
-    var parser: bd.Parser = .{ .allocator = allocator, .stream = std.io.StreamSource{ .file = bdx_file } };
+    var parser: bd.Parser = .{
+        .allocator = allocator,
+        .stream = bd.EndianStreamSource{ .stream = std.io.StreamSource{ .file = bdx_file }, .endian = endian },
+    };
     var result = try parser.parse();
     switch (result) {
         .Program => |*p| {
