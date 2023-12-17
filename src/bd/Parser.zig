@@ -31,7 +31,7 @@ pub const Result = union(enum) {
     Error: Error,
 };
 
-pub const StreamError = error{EndOfStream} || EndianStreamSource.ReadError || EndianStreamSource.SeekError;
+pub const StreamError = error{UnexpectedEndOfStream} || EndianStreamSource.ReadError || EndianStreamSource.SeekError;
 
 pub fn parse(self: *Self) (Allocator.Error || StreamError)!Result {
     var program: Program = .{
@@ -40,27 +40,20 @@ pub fn parse(self: *Self) (Allocator.Error || StreamError)!Result {
     };
     errdefer program.deinit();
 
-    const err = try self.parseProgram(&program);
+    const err = self.parseProgram(&program) catch |err| return switch (err) {
+        error.EndOfStream => error.UnexpectedEndOfStream,
+        else => |e| e,
+    };
+
     if (err) |e| {
         program.deinit();
         return .{ .Error = e };
     }
 
-    var iter = program.functions.iterator();
-    while (iter.next()) |kv| {
-        const function = kv.key_ptr.*;
-        const pos = offsetToStreamPos(kv.value_ptr.*);
-        try self.stream.seekTo(pos);
-        const code = try self.stream.readInt(u16);
-
-        const instruction = (try Instruction.decode(code, &self.stream)) orelse return .{ .Error = .{ .BadInstruction = code } };
-        std.log.debug("Function {X}: Pos {X:0>8}: {X:0>4} => {?}", .{ function, pos, code, fmtInstruction(instruction) });
-    }
-
     return .{ .Program = program };
 }
 
-pub fn parseProgram(self: *Self, program: *Program) (Allocator.Error || StreamError)!?Error {
+pub fn parseProgram(self: *Self, program: *Program) (error{EndOfStream} || Allocator.Error || StreamError)!?Error {
     program.header = try self.stream.readStruct(ProgramHeader);
     log.info("Parsing program \"{s}\"", .{program.header.name()});
 
@@ -72,6 +65,17 @@ pub fn parseProgram(self: *Self, program: *Program) (Allocator.Error || StreamEr
         if (duplicate) |kv| {
             return .{ .DuplicateFunctionId = .{ .id = kv.key } };
         }
+    }
+
+    var iter = program.functions.iterator();
+    while (iter.next()) |kv| {
+        const function = kv.key_ptr.*;
+        const pos = offsetToStreamPos(kv.value_ptr.*);
+        try self.stream.seekTo(pos);
+        const code = try self.stream.readInt(u16);
+
+        const instruction = (try Instruction.decode(code, &self.stream)) orelse return .{ .BadInstruction = code };
+        std.log.debug("Function {X}: Pos {X:0>8}: {X:0>4} => {?}", .{ function, pos, code, fmtInstruction(instruction) });
     }
 
     return null;
