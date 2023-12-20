@@ -16,7 +16,7 @@ pub const Instruction = union(enum) {
     Exit,
     Ret,
     Dup,
-    Syscall,
+    Syscall: Syscall,
 
     // TODO: Possibly split this into multiple decoder functions or use a comptime lookup table.
     pub fn decode(code: u16, stream: *EndianStreamSource) (error{EndOfStream} || EndianStreamSource.ReadError)!?Instruction {
@@ -28,7 +28,7 @@ pub const Instruction = union(enum) {
                 else => blk: {
                     const offset = try stream.readInt(u16);
 
-                    const mode: Mode = if ((bits.flags & 1) == 0) .ref else .deref;
+                    const mode: Push.Mode = if ((bits.flags & 1) == 0) .ref else .deref;
                     const target: PushTarget = switch (bits.immediate) {
                         0 => .{ .Register = .{ .reg = .fp, .offset = offset } },
                         1 => .{ .Register = .{ .reg = .hp, .offset = offset } },
@@ -47,6 +47,7 @@ pub const Instruction = union(enum) {
             2 => null,
             3 => .Deref,
             4 => .Copy,
+            10 => .{ .Syscall = .{ .table = bits.immediate, .index = try stream.readInt(u16) } },
             else => null,
         };
     }
@@ -63,11 +64,6 @@ pub const Register = enum {
     fp,
     sp,
     gp,
-};
-
-pub const Mode = enum {
-    deref,
-    ref,
 };
 
 pub const PushRegister = enum {
@@ -90,11 +86,21 @@ pub const PushTarget = union(enum) {
 pub const Push = struct {
     mode: Mode,
     target: PushTarget,
+
+    pub const Mode = enum {
+        deref,
+        ref,
+    };
 };
 
 pub const Load = union(enum) {
     Int: types.Int,
     Float: types.Float,
+};
+
+pub const Syscall = struct {
+    table: u10,
+    index: u16,
 };
 
 fn formatInstruction(
@@ -116,6 +122,7 @@ fn formatInstruction(
             }
         },
         .Pop => try writer.writeAll("POP ???"),
+        .Syscall => |s| try writer.print("SYSCALL table={} index={}", .{ s.table, s.index }),
         else => try writer.writeAll("???"),
     }
 }

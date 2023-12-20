@@ -48,22 +48,22 @@ pub fn main() !void {
 }
 
 fn output_disassembly(program: *const bd.Program) std.fs.File.WriteError!void {
-    const stdout = std.io.getStdOut().writer();
+    const writer = std.io.getStdOut().writer();
 
-    try stdout.print("{s}\n", .{program.header.name()});
+    try writer.print("{s}\n", .{program.header.name()});
 
-    try stdout.print("heap size:\t{X:0>8}\n", .{program.header.heap_size});
-    try stdout.print("frames size:\t{X:0>8}\n", .{program.header.frames_size});
-    try stdout.print("stack size:\t{X:0>8}\n\n", .{program.header.stack_size});
+    try writer.print("heap size:\t{X:0>8}\n", .{program.header.heap_size});
+    try writer.print("frames size:\t{X:0>8}\n", .{program.header.frames_size});
+    try writer.print("stack size:\t{X:0>8}\n\n", .{program.header.stack_size});
 
-    try stdout.writeAll("functions");
+    try writer.writeAll("functions");
     var iter = program.functions.iterator();
     while (iter.next()) |kv| {
-        try stdout.print("\n{X:0>8}: {X:0>8}", .{ kv.key_ptr.*, bd.offsetToStreamPos(kv.value_ptr.*) });
+        try writer.print("\n{X:0>8}: {X:0>8}", .{ kv.key_ptr.*, bd.offsetToStreamPos(kv.value_ptr.*) });
     }
-    try stdout.writeAll("\n\n");
+    try writer.writeAll("\n\n");
 
-    try stdout.writeAll("testing testing 123\n");
+    try writer.writeAll("testing testing 123\n");
 }
 
 fn output_error(err: bd.Parser.Error) void {
