@@ -1,4 +1,6 @@
 const std = @import("std");
+const enums = std.enums;
+const meta = std.meta;
 const types = @import("types.zig");
 const EndianStreamSource = @import("stream/stream.zig").EndianStreamSource;
 
@@ -47,7 +49,16 @@ pub const Instruction = union(enum) {
             2 => null,
             3 => .Deref,
             4 => .Copy,
-            10 => .{ .Syscall = .{ .table = bits.immediate, .index = try stream.readInt(u16) } },
+            10 => blk: {
+                const table = meta.intToEnum(Syscall.Table, bits.immediate) catch return null;
+                const index = try stream.readInt(u16);
+                if (index >= table.len()) return null;
+
+                break :blk .{ .Syscall = .{
+                    .table = table,
+                    .index = index,
+                } };
+            },
             else => null,
         };
     }
@@ -99,8 +110,36 @@ pub const Load = union(enum) {
 };
 
 pub const Syscall = struct {
-    table: u10,
+    table: Table,
     index: u16,
+
+    pub const Table = enum(u10) {
+        system = 0,
+        field = 1,
+        battle = 2,
+        event = 4,
+        table5 = 5,
+        table6 = 6,
+        table7 = 7,
+        table8 = 8,
+        table10 = 10,
+
+        pub const count = @intFromEnum(.table10) + 1;
+
+        pub fn len(self: Table) usize {
+            return switch (self) {
+                .system => 105,
+                .field => 368,
+                .battle => 98,
+                .event => 59,
+                .table5 => 35,
+                .table6 => 72,
+                .table7 => 37,
+                .table8 => 9,
+                .table10 => 60,
+            };
+        }
+    };
 };
 
 fn formatInstruction(
@@ -122,7 +161,7 @@ fn formatInstruction(
             }
         },
         .Pop => try writer.writeAll("POP ???"),
-        .Syscall => |s| try writer.print("SYSCALL table={} index={}", .{ s.table, s.index }),
+        .Syscall => |s| try writer.print("SYSCALL table={s} index={}", .{ enums.tagName(Syscall.Table, s.table).?, s.index }),
         else => try writer.writeAll("???"),
     }
 }
