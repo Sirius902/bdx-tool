@@ -23,7 +23,6 @@ const FunctionEntry = packed struct {
 
 pub const Error = union(enum) {
     DuplicateFunctionId: struct { id: u32 },
-    BadInstruction: u16,
 };
 
 pub const Result = union(enum) {
@@ -72,10 +71,9 @@ pub fn parseProgram(self: *Self, program: *Program) (error{EndOfStream} || Alloc
         const function = kv.key_ptr.*;
         const pos = offsetToStreamPos(kv.value_ptr.*);
         try self.stream.seekTo(pos);
-        const code = try self.stream.readInt(u16);
 
-        const instruction = (try Instruction.decode(code, &self.stream)) orelse return .{ .BadInstruction = code };
-        std.log.debug("Function {X}: Pos {X:0>8}: {X:0>4} => {?}", .{ function, pos, code, fmtInstruction(instruction) });
+        const res = try Instruction.decode(&self.stream);
+        std.log.debug("Function {X}: Pos {X:0>8}: {X:0>4} => {?}", .{ function, pos, res.code, fmtInstruction(res.instruction) });
     }
 
     return null;

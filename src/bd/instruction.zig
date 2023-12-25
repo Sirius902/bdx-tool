@@ -12,18 +12,21 @@ pub const Instruction = union(enum) {
     Deref,
     UnaryOp,
     BinOp,
-    Branch,
+    Branch: Branch,
     Jump,
     Halt,
     Exit,
     Ret,
     Dup,
     Syscall: Syscall,
+    Unknown,
 
     // TODO: Possibly split this into multiple decoder functions or use a comptime lookup table.
-    pub fn decode(code: u16, stream: *EndianStreamSource) (error{EndOfStream} || EndianStreamSource.ReadError)!?Instruction {
+    pub fn decode(stream: *EndianStreamSource) (error{EndOfStream} || EndianStreamSource.ReadError)!DecodeResult {
+        const code = try stream.readInt(u16);
         const bits: InstructionBits = @bitCast(code);
-        return switch (bits.group) {
+
+        const instruction: Instruction = switch (bits.group) {
             0 => switch (bits.flags) {
                 0 => .{ .Load = .{ .Int = try stream.readInt(types.Int) } },
                 1 => .{ .Load = .{ .Float = @bitCast(try stream.readInt(types.Int)) } },
@@ -35,9 +38,9 @@ pub const Instruction = union(enum) {
                         0 => .{ .Register = .{ .reg = .fp, .offset = offset } },
                         1 => .{ .Register = .{ .reg = .hp, .offset = offset } },
                         2 => .{ .Register = .{ .reg = .fp0, .offset = offset } },
-                        3 => .{ .Null = {} },
+                        3 => .Null,
                         4 => .{ .Register = .{ .reg = .gp, .offset = offset } },
-                        else => return null,
+                        else => break :blk .Unknown,
                     };
 
                     break :blk .{ .Push = .{ .mode = mode, .target = target } };
@@ -46,22 +49,39 @@ pub const Instruction = union(enum) {
             // TODO: Parse additional information from the rest of these.
             1 => .Pop,
             // TODO: Copy immediate
-            2 => null,
+            2 => .Unknown,
             3 => .Deref,
             4 => .Copy,
+            7 => blk: {
+                const offset = try stream.readInt(u16);
+                const condition: Branch.Condition = switch (bits.immediate) {
+                    0 => .none,
+                    1 => .if_zero,
+                    2 => .if_not_zero,
+                    else => break :blk .Unknown,
+                };
+                break :blk .{ .Branch = .{ .condition = condition, .offset = offset } };
+            },
             10 => blk: {
-                const table = meta.intToEnum(Syscall.Table, bits.immediate) catch return null;
+                const table = meta.intToEnum(Syscall.Table, bits.immediate) catch break :blk .Unknown;
                 const index = try stream.readInt(u16);
-                if (index >= table.len()) return null;
+                if (index >= table.len()) break :blk .Unknown;
 
                 break :blk .{ .Syscall = .{
                     .table = table,
                     .index = index,
                 } };
             },
-            else => null,
+            else => .Unknown,
         };
+
+        return .{ .instruction = instruction, .code = code };
     }
+};
+
+pub const DecodeResult = struct {
+    instruction: Instruction,
+    code: u16,
 };
 
 pub const InstructionBits = packed struct {
@@ -107,6 +127,17 @@ pub const Push = struct {
 pub const Load = union(enum) {
     Int: types.Int,
     Float: types.Float,
+};
+
+pub const Branch = struct {
+    condition: Condition,
+    offset: u16,
+
+    pub const Condition = enum {
+        none,
+        if_zero,
+        if_not_zero,
+    };
 };
 
 pub const Syscall = struct {
@@ -156,11 +187,20 @@ fn formatInstruction(
         .Load => |l| {
             try writer.writeAll("LOAD ");
             switch (l) {
-                .Int => |i| try writer.print("{X:}h", .{i}),
+                .Int => |i| try writer.print("{X}h", .{i}),
                 .Float => |f| try writer.print("{}f", .{f}),
             }
         },
         .Pop => try writer.writeAll("POP ???"),
+        .Branch => |b| {
+            const name = switch (b.condition) {
+                .none => "BRA",
+                .if_zero => "BEZ",
+                .if_not_zero => "BNZ",
+            };
+
+            try writer.print("{s} {X}h", .{ name, b.offset });
+        },
         .Syscall => |s| try writer.print("SYSCALL table={s} index={}", .{ enums.tagName(Syscall.Table, s.table).?, s.index }),
         else => try writer.writeAll("???"),
     }
