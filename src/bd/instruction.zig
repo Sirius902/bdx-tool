@@ -3,6 +3,7 @@ const enums = std.enums;
 const meta = std.meta;
 const types = @import("types.zig");
 const EndianStreamSource = @import("stream/stream.zig").EndianStreamSource;
+const offsetToStreamPos = @import("stream/stream.zig").offsetToStreamPos;
 
 pub const Instruction = union(enum) {
     Push: Push,
@@ -53,14 +54,14 @@ pub const Instruction = union(enum) {
             3 => .Deref,
             4 => .Copy,
             7 => blk: {
-                const offset = try stream.readInt(u16);
+                const target = try stream.readInt(i16);
                 const condition: Branch.Condition = switch (bits.immediate) {
                     0 => .none,
                     1 => .if_zero,
                     2 => .if_not_zero,
                     else => break :blk .Unknown,
                 };
-                break :blk .{ .Branch = .{ .condition = condition, .offset = offset } };
+                break :blk .{ .Branch = .{ .condition = condition, .target = target } };
             },
             10 => blk: {
                 const table = meta.intToEnum(Syscall.Table, bits.immediate) catch break :blk .Unknown;
@@ -131,7 +132,7 @@ pub const Load = union(enum) {
 
 pub const Branch = struct {
     condition: Condition,
-    offset: u16,
+    target: i16,
 
     pub const Condition = enum {
         none,
@@ -173,8 +174,13 @@ pub const Syscall = struct {
     };
 };
 
-fn formatInstruction(
+const FormatContext = struct {
     instruction: Instruction,
+    pc: u16,
+};
+
+fn formatInstruction(
+    ctx: FormatContext,
     comptime fmt: []const u8,
     options: std.fmt.FormatOptions,
     writer: anytype,
@@ -182,7 +188,7 @@ fn formatInstruction(
     _ = fmt;
     _ = options;
 
-    switch (instruction) {
+    switch (ctx.instruction) {
         .Push => |p| try writer.print("PUSH mode={}, target={}", .{ p.mode, p.target }),
         .Load => |l| {
             try writer.writeAll("LOAD ");
@@ -199,13 +205,16 @@ fn formatInstruction(
                 .if_not_zero => "BNZ",
             };
 
-            try writer.print("{s} {X}h", .{ name, b.offset });
+            try writer.print("{s} {X}h", .{
+                name,
+                offsetToStreamPos(@intCast(@as(i64, @intCast(ctx.pc)) + @as(i64, @intCast(b.target)))),
+            });
         },
         .Syscall => |s| try writer.print("SYSCALL table={s} index={}", .{ enums.tagName(Syscall.Table, s.table).?, s.index }),
         else => try writer.writeAll("???"),
     }
 }
 
-pub fn fmtInstruction(instruction: Instruction) std.fmt.Formatter(formatInstruction) {
-    return .{ .data = instruction };
+pub fn fmtInstruction(instruction: Instruction, pc: u16) std.fmt.Formatter(formatInstruction) {
+    return .{ .data = .{ .instruction = instruction, .pc = pc } };
 }

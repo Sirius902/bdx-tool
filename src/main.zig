@@ -42,6 +42,14 @@ pub fn main() !void {
         .Program => |*p| {
             defer p.deinit();
             try output_disassembly(p);
+
+            const writer = std.io.getStdOut().writer();
+            try writer.writeAll("potential instruction finder\n");
+            try bd.experimental.findPotentialInstructions(
+                &parser.stream,
+                writer,
+                .{ .branch = true, .syscall = true },
+            );
         },
         .Error => |e| output_error(e),
     }
@@ -63,7 +71,7 @@ fn output_disassembly(program: *const bd.Program) std.fs.File.WriteError!void {
     }
     try writer.writeAll("\n\n");
 
-    try writer.writeAll("testing testing 123\n");
+    // TODO: Output disassembled instructions.
 }
 
 fn output_error(err: bd.Parser.Error) void {

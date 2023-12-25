@@ -7,6 +7,7 @@ const Program = @import("program.zig").Program;
 const ProgramHeader = @import("program.zig").ProgramHeader;
 const EndianStreamSource = @import("stream/stream.zig").EndianStreamSource;
 const offsetToStreamPos = @import("stream/stream.zig").offsetToStreamPos;
+const streamPosToOffset = @import("stream/stream.zig").streamPosToOffset;
 
 const Instruction = @import("instruction.zig").Instruction;
 const fmtInstruction = @import("instruction.zig").fmtInstruction;
@@ -73,7 +74,12 @@ pub fn parseProgram(self: *Self, program: *Program) (error{EndOfStream} || Alloc
         try self.stream.seekTo(pos);
 
         const res = try Instruction.decode(&self.stream);
-        std.log.debug("Function {X}: Pos {X:0>8}: {X:0>4} => {?}", .{ function, pos, res.code, fmtInstruction(res.instruction) });
+        std.log.debug("Function {X}: Pos {X:0>8}: {X:0>4} => {?}", .{
+            function,
+            pos,
+            res.code,
+            fmtInstruction(res.instruction, streamPosToOffset(try self.stream.getPos())),
+        });
     }
 
     return null;
