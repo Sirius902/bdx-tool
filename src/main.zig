@@ -43,6 +43,8 @@ pub fn main() !void {
             defer p.deinit();
             try output_disassembly(p);
 
+            const function_table_size = (2 * @sizeOf(u32)) * (p.functions.count() + 1);
+            try parser.stream.seekTo(@sizeOf(bd.ProgramHeader) + function_table_size);
             const writer = std.io.getStdOut().writer();
             try writer.writeAll("potential instruction finder\n");
             try bd.experimental.findPotentialInstructions(
@@ -67,7 +69,7 @@ fn output_disassembly(program: *const bd.Program) std.fs.File.WriteError!void {
     try writer.writeAll("functions");
     var iter = program.functions.iterator();
     while (iter.next()) |kv| {
-        try writer.print("\n{X:0>8}: {X:0>8}", .{ kv.key_ptr.*, bd.offsetToStreamPos(kv.value_ptr.*) });
+        try writer.print("\n{X:0>8}: {X:0>8}", .{ kv.key_ptr.*, bd.streamPosFromOffset(kv.value_ptr.*) });
     }
     try writer.writeAll("\n\n");
 

@@ -1,7 +1,7 @@
 const EndianStreamSource = @import("stream/EndianStreamSource.zig");
 const Instruction = @import("instruction.zig").Instruction;
 const fmtInstruction = @import("instruction.zig").fmtInstruction;
-const streamPosToOffset = @import("stream/stream.zig").streamPosToOffset;
+const offsetFromStreamPos = @import("stream/stream.zig").offsetFromStreamPos;
 
 pub const StreamError = EndianStreamSource.ReadError || EndianStreamSource.SeekError;
 
@@ -16,6 +16,8 @@ pub fn findPotentialInstructions(
     writer: anytype,
     config: Config,
 ) (StreamError || @TypeOf(writer).Error)!void {
+    const end_pos = try stream.getEndPos();
+
     while (true) {
         const pos = try stream.getPos();
         const res = Instruction.decode(stream) catch |err| switch (err) {
@@ -23,18 +25,21 @@ pub fn findPotentialInstructions(
             else => |e| return e,
         };
 
+        const pc_pos = try stream.getPos();
+        const pc = offsetFromStreamPos(pc_pos);
+
         const matches_filter = switch (res.instruction) {
-            .Branch => config.branch,
+            .Branch => |b| config.branch and b.computeTargetPos(pc) < end_pos,
             .Syscall => config.syscall,
             else => false,
         };
 
-        if (matches_filter) {
-            try writer.print("{X:0>8}: {X:0>4} = {}\n", .{
-                pos,
-                res.code,
-                fmtInstruction(res.instruction, streamPosToOffset(try stream.getPos())),
-            });
-        }
+        if (!matches_filter) continue;
+
+        try writer.print("{X:0>8}: {X:0>4} = {}\n", .{
+            pos,
+            res.code,
+            fmtInstruction(res.instruction, pc),
+        });
     }
 }

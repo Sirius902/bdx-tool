@@ -3,7 +3,7 @@ const enums = std.enums;
 const meta = std.meta;
 const types = @import("types.zig");
 const EndianStreamSource = @import("stream/stream.zig").EndianStreamSource;
-const offsetToStreamPos = @import("stream/stream.zig").offsetToStreamPos;
+const streamPosFromOffset = @import("stream/stream.zig").streamPosFromOffset;
 
 pub const Instruction = union(enum) {
     Push: Push,
@@ -54,14 +54,14 @@ pub const Instruction = union(enum) {
             3 => .Deref,
             4 => .Copy,
             7 => blk: {
-                const target = try stream.readInt(i16);
+                const offset = try stream.readInt(i16);
                 const condition: Branch.Condition = switch (bits.immediate) {
                     0 => .none,
                     1 => .if_zero,
                     2 => .if_not_zero,
                     else => break :blk .Unknown,
                 };
-                break :blk .{ .Branch = .{ .condition = condition, .target = target } };
+                break :blk .{ .Branch = .{ .condition = condition, .offset = offset } };
             },
             10 => blk: {
                 const table = meta.intToEnum(Syscall.Table, bits.immediate) catch break :blk .Unknown;
@@ -132,13 +132,21 @@ pub const Load = union(enum) {
 
 pub const Branch = struct {
     condition: Condition,
-    target: i16,
+    offset: i16,
 
     pub const Condition = enum {
         none,
         if_zero,
         if_not_zero,
     };
+
+    pub inline fn computeTargetOffset(self: *const Branch, pc: u16) u16 {
+        return @intCast(@as(i32, pc) + @as(i32, self.offset));
+    }
+
+    pub fn computeTargetPos(self: *const Branch, pc: u16) u64 {
+        return streamPosFromOffset(self.computeTargetOffset(pc));
+    }
 };
 
 pub const Syscall = struct {
@@ -205,10 +213,7 @@ fn formatInstruction(
                 .if_not_zero => "BNZ",
             };
 
-            try writer.print("{s} {X}h", .{
-                name,
-                offsetToStreamPos(@intCast(@as(i64, @intCast(ctx.pc)) + @as(i64, @intCast(b.target)))),
-            });
+            try writer.print("{s} {X}h", .{ name, b.computeTargetPos(ctx.pc) });
         },
         .Syscall => |s| try writer.print("SYSCALL table={s} index={}", .{ enums.tagName(Syscall.Table, s.table).?, s.index }),
         else => try writer.writeAll("???"),
