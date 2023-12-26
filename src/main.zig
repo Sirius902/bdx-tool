@@ -1,4 +1,5 @@
 const std = @import("std");
+const Allocator = std.mem.Allocator;
 const Endian = std.builtin.Endian;
 const bd = @import("bd/bd.zig");
 
@@ -11,32 +12,20 @@ pub fn main() !void {
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    // TODO: Deinit args as soon as it is no longer needed.
-    var args = try std.process.argsWithAllocator(allocator);
+    const args = try Args.parse(allocator);
     defer args.deinit();
 
-    if (!args.skip()) return error.InvalidArgument;
-    const bdx_path = try allocator.dupe(u8, args.next() orelse return error.InvalidArgument);
-    defer allocator.free(bdx_path);
-
-    var endian: ?Endian = null;
-    if (args.next()) |endian_str| {
-        if (std.mem.eql(u8, endian_str, "b")) {
-            endian = .big;
-        } else if (std.mem.eql(u8, endian_str, "l")) {
-            endian = .little;
-        } else {
-            return error.InvalidArgument;
-        }
-    }
-
-    var bdx_file = try std.fs.cwd().openFile(bdx_path, .{});
+    var bdx_file = try std.fs.cwd().openFile(args.bdx_path, .{});
     defer bdx_file.close();
 
     var parser: bd.Parser = .{
         .allocator = allocator,
-        .stream = bd.EndianStreamSource{ .stream = std.io.StreamSource{ .file = bdx_file }, .endian = endian },
+        .stream = bd.EndianStreamSource{
+            .stream = std.io.StreamSource{ .file = bdx_file },
+            .endian = args.endian,
+        },
     };
+
     var result = try parser.parse();
     switch (result) {
         .Program => |*p| {
@@ -56,6 +45,40 @@ pub fn main() !void {
         .Error => |e| output_error(e),
     }
 }
+
+const Args = struct {
+    allocator: Allocator,
+    bdx_path: []const u8,
+    endian: ?Endian,
+
+    pub const Error = error{InvalidArgument};
+
+    pub fn parse(allocator: Allocator) (Error || Allocator.Error)!Args {
+        var args = try std.process.argsWithAllocator(allocator);
+        defer args.deinit();
+
+        if (!args.skip()) return error.InvalidArgument;
+        const bdx_path = try allocator.dupe(u8, args.next() orelse return error.InvalidArgument);
+        errdefer allocator.free(bdx_path);
+
+        var endian: ?Endian = null;
+        if (args.next()) |endian_str| {
+            if (std.mem.eql(u8, endian_str, "b")) {
+                endian = .big;
+            } else if (std.mem.eql(u8, endian_str, "l")) {
+                endian = .little;
+            } else {
+                return error.InvalidArgument;
+            }
+        }
+
+        return .{ .allocator = allocator, .bdx_path = bdx_path, .endian = endian };
+    }
+
+    pub fn deinit(self: *const Args) void {
+        self.allocator.free(self.bdx_path);
+    }
+};
 
 fn output_disassembly(program: *const bd.Program) std.fs.File.WriteError!void {
     const writer = std.io.getStdOut().writer();
