@@ -6,21 +6,24 @@ const EndianStreamSource = @import("stream/stream.zig").EndianStreamSource;
 const streamPosFromOffset = @import("stream/stream.zig").streamPosFromOffset;
 
 pub const Instruction = union(enum) {
-    Push: Push,
     Load: Load,
-    Pop,
+    Push: Push,
+    Pop: [1]u16,
+    Memcpy: [2]u16,
+    Deref: [1]u16,
     Copy,
-    Deref,
     UnaryOp,
     BinOp,
     Branch: Branch,
-    Jump,
+    Call: Call,
     Halt,
     Exit,
     Ret,
+    Drop,
     Dup,
     Syscall: Syscall,
-    Unknown,
+    LongCall: LongCall,
+    Invalid,
 
     // TODO: Possibly split this into multiple decoder functions or use a comptime lookup table.
     pub fn decode(stream: *EndianStreamSource) (error{EndOfStream} || EndianStreamSource.ReadError)!DecodeResult {
@@ -41,39 +44,63 @@ pub const Instruction = union(enum) {
                         2 => .{ .Register = .{ .reg = .fp0, .offset = offset } },
                         3 => .Null,
                         4 => .{ .Register = .{ .reg = .gp, .offset = offset } },
-                        else => break :blk .Unknown,
+                        else => break :blk .Invalid,
                     };
 
                     break :blk .{ .Push = .{ .mode = mode, .target = target } };
                 },
             },
-            // TODO: Parse additional information from the rest of these.
-            1 => .Pop,
-            // TODO: Copy immediate
-            2 => .Unknown,
-            3 => .Deref,
+            1 => .{ .Pop = [_]u16{try stream.readInt(u16)} },
+            2 => .{ .Memcpy = [_]u16{ try stream.readInt(u16), try stream.readInt(u16) } },
+            3 => .{ .Deref = [_]u16{try stream.readInt(u16)} },
             4 => .Copy,
+            5 => .UnaryOp,
+            6 => .BinOp,
             7 => blk: {
                 const offset = try stream.readInt(i16);
                 const condition: Branch.Condition = switch (bits.immediate) {
-                    0 => .none,
+                    0 => .always,
                     1 => .if_zero,
                     2 => .if_not_zero,
-                    else => break :blk .Unknown,
+                    else => break :blk .Invalid,
                 };
                 break :blk .{ .Branch = .{ .condition = condition, .offset = offset } };
             },
+            8 => if (bits.flags == 0) .{ .Call = .{
+                .frame_size = bits.immediate,
+                .offset = try stream.readInt(i16),
+            } } else .Invalid,
+            9 => switch (bits.immediate) {
+                0 => .Halt,
+                1 => .Exit,
+                2 => .Ret,
+                3 => .Drop,
+                5 => .Dup,
+                // Sin
+                6 => .UnaryOp,
+                // Cos
+                7 => .UnaryOp,
+                // DegToRad
+                8 => .UnaryOp,
+                // RadToDeg
+                9 => .UnaryOp,
+                else => .Invalid,
+            },
             10 => blk: {
-                const table = meta.intToEnum(Syscall.Table, bits.immediate) catch break :blk .Unknown;
+                const table = meta.intToEnum(Syscall.Table, bits.immediate) catch break :blk .Invalid;
                 const index = try stream.readInt(u16);
-                if (index >= table.len()) break :blk .Unknown;
+                if (index >= table.len()) break :blk .Invalid;
 
                 break :blk .{ .Syscall = .{
                     .table = table,
                     .index = index,
                 } };
             },
-            else => .Unknown,
+            11 => if (bits.flags == 0) .{ .LongCall = .{
+                .frame_size = bits.immediate,
+                .offset = @as(i32, try stream.readInt(u16)) + @as(i32, try stream.readInt(u16)) << 16,
+            } } else .Invalid,
+            else => .Invalid,
         };
 
         return .{ .instruction = instruction, .code = code };
@@ -135,7 +162,7 @@ pub const Branch = struct {
     offset: i16,
 
     pub const Condition = enum {
-        none,
+        always,
         if_zero,
         if_not_zero,
     };
@@ -145,6 +172,19 @@ pub const Branch = struct {
     }
 
     pub fn computeTargetPos(self: *const Branch, pc: u16) u64 {
+        return streamPosFromOffset(self.computeTargetOffset(pc));
+    }
+};
+
+pub const Call = struct {
+    frame_size: u10,
+    offset: i16,
+
+    pub inline fn computeTargetOffset(self: *const Call, pc: u16) u16 {
+        return @intCast(@as(i32, pc) + @as(i32, self.offset));
+    }
+
+    pub fn computeTargetPos(self: *const Call, pc: u16) u64 {
         return streamPosFromOffset(self.computeTargetOffset(pc));
     }
 };
@@ -182,8 +222,22 @@ pub const Syscall = struct {
     };
 };
 
+pub const LongCall = struct {
+    frame_size: u10,
+    offset: i32,
+
+    pub inline fn computeTargetOffset(self: *const LongCall, pc: u16) u16 {
+        return @intCast(@as(i32, pc) + self.offset);
+    }
+
+    pub fn computeTargetPos(self: *const LongCall, pc: u16) u64 {
+        return streamPosFromOffset(self.computeTargetOffset(pc));
+    }
+};
+
 const FormatContext = struct {
     instruction: Instruction,
+    code: u16,
     pc: u16,
 };
 
@@ -197,29 +251,52 @@ fn formatInstruction(
     _ = options;
 
     switch (ctx.instruction) {
-        .Push => |p| try writer.print("PUSH mode={}, target={}", .{ p.mode, p.target }),
         .Load => |l| {
-            try writer.writeAll("LOAD ");
+            try writer.writeAll("LOAD");
             switch (l) {
-                .Int => |i| try writer.print("{X}h", .{i}),
-                .Float => |f| try writer.print("{}f", .{f}),
+                .Int => |i| try writer.print(".I 0x{X:0>8}", .{@as(u32, @bitCast(i))}),
+                .Float => |f| try writer.print(".F {d}f", .{f}),
             }
         },
-        .Pop => try writer.writeAll("POP ???"),
+        .Push => |p| {
+            try writer.writeAll("PUSH ");
+
+            if (p.mode == .ref) {
+                try writer.writeByte('&');
+            }
+
+            switch (p.target) {
+                .Null => try writer.writeAll("null"),
+                .Register => |r| try writer.print("{s}[{}]", .{ enums.tagName(PushRegister, r.reg).?, r.offset }),
+            }
+        },
+        .Pop => |p| try writer.print("POP 0x{X:0>4}", .{p[0]}),
+        .Memcpy => |m| try writer.print("MEMCPY {}, 0x{X:0>4}", .{ m[0], m[1] }),
+        .Deref => |d| try writer.print("DEREF 0x{X:0>4}", .{d[0]}),
+        .Copy => try writer.writeAll("COPY ???"),
+        .UnaryOp => try writer.writeAll("UNARYOP ???"),
+        .BinOp => try writer.writeAll("BINOP ???"),
         .Branch => |b| {
             const name = switch (b.condition) {
-                .none => "BRA",
+                .always => "BRA",
                 .if_zero => "BEZ",
                 .if_not_zero => "BNZ",
             };
 
-            try writer.print("{s} {X}h", .{ name, b.computeTargetPos(ctx.pc) });
+            try writer.print("{s} 0x{X:0>8}", .{ name, b.computeTargetPos(ctx.pc) });
         },
-        .Syscall => |s| try writer.print("SYSCALL table={s} index={}", .{ enums.tagName(Syscall.Table, s.table).?, s.index }),
-        else => try writer.writeAll("???"),
+        .Call => |c| try writer.print("CALL {}, 0x{X:0>8}", .{ c.frame_size, c.computeTargetPos(ctx.pc) }),
+        .Halt => try writer.writeAll("HALT"),
+        .Exit => try writer.writeAll("EXIT"),
+        .Ret => try writer.writeAll("RET"),
+        .Drop => try writer.writeAll("DROP"),
+        .Dup => try writer.writeAll("DUP"),
+        .Syscall => |s| try writer.print("SYSCALL table={s}, index={}", .{ enums.tagName(Syscall.Table, s.table).?, s.index }),
+        .LongCall => |l| try writer.print("LONGCALL {}, 0x{X:0>8}", .{ l.frame_size, l.computeTargetPos(ctx.pc) }),
+        .Invalid => try writer.print(".DW 0x{X:0>4}", .{ctx.code}),
     }
 }
 
-pub fn fmtInstruction(instruction: Instruction, pc: u16) std.fmt.Formatter(formatInstruction) {
-    return .{ .data = .{ .instruction = instruction, .pc = pc } };
+pub fn fmtInstruction(instruction: Instruction, code: u16, pc: u16) std.fmt.Formatter(formatInstruction) {
+    return .{ .data = .{ .instruction = instruction, .code = code, .pc = pc } };
 }

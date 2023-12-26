@@ -29,6 +29,7 @@ pub fn findPotentialInstructions(
         const pc = offsetFromStreamPos(pc_pos);
 
         const matches_filter = switch (res.instruction) {
+            .Load => true,
             .Branch => |b| config.branch and b.computeTargetPos(pc) < end_pos,
             .Syscall => config.syscall,
             else => false,
@@ -39,7 +40,7 @@ pub fn findPotentialInstructions(
         try writer.print("{X:0>8}: {X:0>4} = {}\n", .{
             pos,
             res.code,
-            fmtInstruction(res.instruction, pc),
+            fmtInstruction(res.instruction, res.code, pc),
         });
     }
 }

@@ -37,6 +37,7 @@ pub fn parse(self: *Self) (Allocator.Error || StreamError)!Result {
     var program: Program = .{
         .header = undefined,
         .functions = std.AutoArrayHashMap(u32, u32).init(self.allocator),
+        .known_instructions = Program.KnownInstructionQueue.init(self.allocator, {}),
     };
     errdefer program.deinit();
 
@@ -67,19 +68,37 @@ pub fn parseProgram(self: *Self, program: *Program) (error{EndOfStream} || Alloc
         }
     }
 
+    // TODO: This needs to become a BFS with branching control flow.
     var iter = program.functions.iterator();
-    while (iter.next()) |kv| {
-        const function = kv.key_ptr.*;
-        const pos = streamPosFromOffset(kv.value_ptr.*);
-        try self.stream.seekTo(pos);
+    const kv = iter.next() orelse return null;
 
+    try self.stream.seekTo(streamPosFromOffset(kv.value_ptr.*));
+    if (try self.followInstructionFlow(program)) |err| {
+        return err;
+    }
+
+    return null;
+}
+
+pub fn followInstructionFlow(self: *Self, program: *Program) (error{EndOfStream} || Allocator.Error || StreamError)!?Error {
+    while (true) {
+        const pos = try self.stream.getPos();
         const res = try Instruction.decode(&self.stream);
-        std.log.debug("Function {X}: Pos {X:0>8}: {X:0>4} => {?}", .{
-            function,
-            pos,
-            res.code,
-            fmtInstruction(res.instruction, offsetFromStreamPos(try self.stream.getPos())),
-        });
+        const pc = offsetFromStreamPos(try self.stream.getPos());
+
+        try program.known_instructions.add(.{ .pos = pos, .code = res.code, .pc = pc, .instruction = res.instruction });
+
+        switch (res.instruction) {
+            .Branch => |b| if (b.condition == .always) break else {
+                log.debug("Conditional branch, add location to search", .{});
+            },
+            // TODO: Call might not return, find out how to handle.
+            .Call, .LongCall => {
+                log.debug("CALL or LONGCALL, add location to search", .{});
+            },
+            .Halt, .Exit, .Ret => break,
+            else => {},
+        }
     }
 
     return null;

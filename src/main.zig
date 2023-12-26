@@ -31,16 +31,6 @@ pub fn main() !void {
         .Program => |*p| {
             defer p.deinit();
             try output_disassembly(p);
-
-            const function_table_size = (2 * @sizeOf(u32)) * (p.functions.count() + 1);
-            try parser.stream.seekTo(@sizeOf(bd.ProgramHeader) + function_table_size);
-            const writer = std.io.getStdOut().writer();
-            try writer.writeAll("potential instruction finder\n");
-            try bd.experimental.findPotentialInstructions(
-                &parser.stream,
-                writer,
-                .{ .branch = true, .syscall = true },
-            );
         },
         .Error => |e| output_error(e),
     }
@@ -80,7 +70,7 @@ const Args = struct {
     }
 };
 
-fn output_disassembly(program: *const bd.Program) std.fs.File.WriteError!void {
+fn output_disassembly(program: *bd.Program) std.fs.File.WriteError!void {
     const writer = std.io.getStdOut().writer();
 
     try writer.print("{s}\n", .{program.header.name()});
@@ -96,7 +86,11 @@ fn output_disassembly(program: *const bd.Program) std.fs.File.WriteError!void {
     }
     try writer.writeAll("\n\n");
 
-    // TODO: Output disassembled instructions.
+    var inst_iter = program.known_instructions.iterator();
+    while (inst_iter.next()) |known| {
+        const inst = known.instruction;
+        try writer.print("{X:0>8}: {X:0>4}: {}\n", .{ known.pos, known.code, bd.fmtInstruction(inst, known.code, known.pc) });
+    }
 }
 
 fn output_error(err: bd.Parser.Error) void {
