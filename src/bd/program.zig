@@ -15,13 +15,13 @@ pub const ProgramHeader = extern struct {
 
 pub const Program = struct {
     header: ProgramHeader,
-    functions: std.AutoArrayHashMap(u32, u32),
+    entrypoints: std.AutoArrayHashMap(u32, u32),
     known_instructions: KnownInstructionQueue,
 
     pub const KnownInstructionQueue = std.PriorityQueue(KnownInstruction, void, KnownInstruction.compareFn);
 
     pub fn deinit(self: *Program) void {
-        self.functions.deinit();
+        self.entrypoints.deinit();
         self.known_instructions.deinit();
     }
 };

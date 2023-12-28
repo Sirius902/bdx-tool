@@ -79,8 +79,8 @@ fn output_disassembly(program: *bd.Program) std.fs.File.WriteError!void {
     try writer.print("frames size:\t{X:0>8}\n", .{program.header.frames_size});
     try writer.print("stack size:\t{X:0>8}\n\n", .{program.header.stack_size});
 
-    try writer.writeAll("functions");
-    var iter = program.functions.iterator();
+    try writer.writeAll("entrypoints");
+    var iter = program.entrypoints.iterator();
     while (iter.next()) |kv| {
         try writer.print("\n{X:0>8}: {X:0>8}", .{ kv.key_ptr.*, bd.streamPosFromOffset(kv.value_ptr.*) });
     }

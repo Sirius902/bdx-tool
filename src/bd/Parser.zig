@@ -17,13 +17,13 @@ stream: EndianStreamSource,
 
 const Self = @This();
 
-const FunctionEntry = packed struct {
+const EntrypointData = packed struct {
     id: u32,
-    address: u32,
+    offset: u32,
 };
 
 pub const Error = union(enum) {
-    DuplicateFunctionId: struct { id: u32 },
+    DuplicateEntrypointId: struct { id: u32 },
 };
 
 pub const Result = union(enum) {
@@ -36,7 +36,7 @@ pub const StreamError = error{UnexpectedEndOfStream} || EndianStreamSource.ReadE
 pub fn parse(self: *Self) (Allocator.Error || StreamError)!Result {
     var program: Program = .{
         .header = undefined,
-        .functions = std.AutoArrayHashMap(u32, u32).init(self.allocator),
+        .entrypoints = std.AutoArrayHashMap(u32, u32).init(self.allocator),
         .known_instructions = Program.KnownInstructionQueue.init(self.allocator, {}),
     };
     errdefer program.deinit();
@@ -59,17 +59,17 @@ pub fn parseProgram(self: *Self, program: *Program) (error{EndOfStream} || Alloc
     log.info("Parsing program \"{s}\"", .{program.header.name()});
 
     while (true) {
-        const entry = try self.stream.readStruct(FunctionEntry);
-        if (entry.address == 0) break;
+        const entry = try self.stream.readStruct(EntrypointData);
+        if (entry.offset == 0) break;
 
-        const duplicate = try program.functions.fetchPut(entry.id, entry.address);
+        const duplicate = try program.entrypoints.fetchPut(entry.id, entry.offset);
         if (duplicate) |kv| {
-            return .{ .DuplicateFunctionId = .{ .id = kv.key } };
+            return .{ .DuplicateEntrypointId = .{ .id = kv.key } };
         }
     }
 
     // TODO: This needs to become a BFS with branching control flow.
-    var iter = program.functions.iterator();
+    var iter = program.entrypoints.iterator();
     const kv = iter.next() orelse return null;
 
     try self.stream.seekTo(streamPosFromOffset(kv.value_ptr.*));
